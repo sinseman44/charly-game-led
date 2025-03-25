@@ -3,13 +3,13 @@
 #include "FS.h"
 #include "LittleFS.h"
 
-#define DS1 5    // Data pour 74HC595 #1
-#define SHCP1 7  // Shift Clock pour 74HC595 #1
-#define STCP1 9  // Latch Clock pour 74HC595 #1
+#define DS1   5  // Data pour 74HC595 #1
+#define SHCP1 9  // Shift Clock pour 74HC595 #1
+#define STCP1 7  // Latch Clock pour 74HC595 #1
 
-#define DS2 18    // Data pour 74HC595 #2
-#define SHCP2 33  // Shift Clock pour 74HC595 #2
-#define STCP2 35  // Latch Clock pour 74HC595 #2
+#define DS2   35  // Data pour 74HC595 #2
+#define SHCP2 18  // Shift Clock pour 74HC595 #2
+#define STCP2 33  // Latch Clock pour 74HC595 #2
 
 #define BUTTON 12  // GPIO du bouton-poussoir
 
@@ -18,6 +18,9 @@
 volatile bool buttonPressed = false;          // Variable pour détecter l'appui bouton en IRQ
 volatile unsigned long lastDebounceTime = 0;  // Pour l'anti-rebond
 const unsigned long debounceDelay = 300;      // Temps minimum entre 2 appuis (50ms)
+
+unsigned long lastUpdate = 0;
+unsigned int interval = 5;  // Temps entre 2 décalages en ms
 
 const char *ssid = "Charly-Game";   // Nom du réseau WiFi
 const char *password = "12345678";  // Mot de passe (minimum 8 caractères)
@@ -40,6 +43,21 @@ void IRAM_ATTR handleButtonPress() {
   }
 }
 
+// Fonction pour envoyer des données à un 74HC595 spécifique
+void shiftOutData(int dsPin, int shcpPin, int stcpPin, uint8_t data, bool reverse = false) {
+  digitalWrite(stcpPin, LOW);  // Désactiver le latch
+
+  for (int i = 0; i < 8; i++) {
+    int bitIndex = reverse ? i : (7 - i);  // ↩ inverser l’ordre des bits si besoin
+
+    digitalWrite(shcpPin, LOW);
+    digitalWrite(dsPin, (data >> bitIndex) & 1);
+    digitalWrite(shcpPin, HIGH);
+  }
+
+  digitalWrite(stcpPin, HIGH);  // Valider les données
+}
+
 void setup() {
   Serial.begin(115200);       // Initialisation du moniteur série
   randomSeed(analogRead(0));  // Initialisation du générateur de nombres aléatoires
@@ -47,10 +65,14 @@ void setup() {
   pinMode(DS1, OUTPUT);
   pinMode(SHCP1, OUTPUT);
   pinMode(STCP1, OUTPUT);
+  // Toutes les LEDs éteintes à l'initialisation
+  shiftOutData(DS1, SHCP1, STCP1, 0x00);
 
   pinMode(DS2, OUTPUT);
   pinMode(SHCP2, OUTPUT);
   pinMode(STCP2, OUTPUT);
+  // Toutes les LEDs éteintes à l'initialisation
+  shiftOutData(DS2, SHCP2, STCP2, 0x00);
 
   pinMode(BUTTON, INPUT);                              // Activation du pull-down interne
   attachInterrupt(BUTTON, handleButtonPress, RISING);  // Déclenchement sur un appui (front montant)
@@ -79,32 +101,21 @@ void setup() {
   init_game();
 }
 
-// Fonction pour envoyer des données à un 74HC595 spécifique
-void shiftOutData(int dsPin, int shcpPin, int stcpPin, uint8_t data) {
-  digitalWrite(stcpPin, LOW);  // Désactiver le latch
-
-  for (int i = 7; i >= 0; i--) {
-    digitalWrite(shcpPin, LOW);
-    digitalWrite(dsPin, (data >> i) & 1);
-    digitalWrite(shcpPin, HIGH);
-  }
-
-  digitalWrite(stcpPin, HIGH);  // Activer le latch
-}
-
 // Fonction qui initialise le jeu
 // c'est à dire :
 // - allume aleatoirement une led sur le shift register 2
 // - initialise le shift register 1 en partant de la premiere led
 void init_game() {
   uint8_t previousRand = randLedToMatch;
-
   // 🔄 Générer une nouvelle LED cible différente de la précédente
   do {
     randLedToMatch = 1 << random(0, 8);
   } while (randLedToMatch == previousRand);  // Assure que la nouvelle valeur est différente
 
+  Serial.print("randLedToMatch: 0x");
+  Serial.println(randLedToMatch, HEX);
   shiftOutData(DS2, SHCP2, STCP2, randLedToMatch);
+  delay(100);
   findLed = 0;  // Réinitialisation correcte
 }
 
@@ -329,44 +340,6 @@ void onWin() {
   Serial.println(score);
 }
 
-// 🌐 Nouvelle interface web simplifiée avec correction AJAX
-//String pageHTML() {
-//  return String("<!DOCTYPE html><html lang='fr'>") +
-//         "<head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>" +
-//         "<title>Score du Jeu</title>" +
-//         "<style>" +
-//         "body { font-family: Arial, sans-serif; text-align: center; background-color: #121212; color: white; margin: 0; padding: 0; }" +
-//         "h1 { padding: 15px; font-size: 28px; }" +
-//         ".container { max-width: 400px; margin: auto; padding: 20px; }" +
-//         ".score { font-size: 60px; font-weight: bold; color: #ff9800; }" +
-//         ".score-list { font-size: 20px; font-weight: bold; color: white; margin-top: 20px; }" +
-//         ".score-title { font-size: 24px; color: #4caf50; margin-top: 40px; }" +
-//         "</style>" +
-//         "<script>" +
-//         "function updateScore() {" +
-//         "fetch('/score')" +  // 🔄 Récupérer le SCORE ACTUEL
-//         ".then(response => response.text())" +
-//         ".then(data => document.getElementById('score').innerText = data);" +
-//         "}" +
-//         "function updateScores() {" +
-//         "fetch('/scores')" +  // 🔄 Récupérer les MEILLEURS SCORES
-//         ".then(response => response.text())" +
-//         ".then(data => document.getElementById('scoreList').innerText = data);" +
-//         "}" +
-//         "setInterval(updateScore, 1000);" +  // Mise à jour du score actuel toutes les 1s
-//         "setInterval(updateScores, 2000);" + // Mise à jour des meilleurs scores toutes les 2s
-//         "</script>" +
-//         "</head>" +
-//         "<body>" +
-//         "<h1>🎮 Score du Jeu 🎮</h1>" +
-//         "<div class='container'>" +
-//         "<p>Score actuel :</p>" +
-//         "<span id='score' class='score'>0</span>" +  // 🏆 Score mis à jour en temps réel
-//         "<h2 class='score-title'>🏆 Meilleurs Scores</h2>" +
-//         "<pre id='scoreList' class='score-list'>Chargement...</pre>" +  // 🔄 Meilleurs scores
-//         "</div></body></html>";
-//}
-
 // 🌐 Nouvelle interface web améliorée avec un joli bouton de réinitialisation
 String pageHTML() {
   return String("<!DOCTYPE html><html lang='fr'>") +
@@ -422,38 +395,40 @@ String pageHTML() {
 }
 
 void loop() {
-  server.handleClient();  // Gérer les requêtes web
-                          // 🟢 Gestion du chenillard
-  if (i_defil >= defilement) {
-    shiftOutData(DS1, SHCP1, STCP1, (1 << findLed));
-  }
-
-  // 🔵 Vérification du bouton (Victoire ou Défaite)
-  if (buttonPressed) {
-    buttonPressed = false;  // Reset du flag
-
-    // 🌟 Ajustement de la synchronisation avec `findLed - 1`
-    uint8_t shiftedValue = (findLed > 0) ? (1 << (findLed - 1)) : 128;
-
-    // 🌟 SYNCHRONISER AVEC RANDLED 🌟
-    if (randLedToMatch == shiftedValue) {
-      Serial.println("✔ Victoire !");
-      end_animation(true);
-    } else {
-      Serial.println("❌ Défaite...");
-      end_animation(false);
+  unsigned long now = millis();
+  if (now - lastUpdate > interval) {
+    lastUpdate = now;
+    server.handleClient();  // Gérer les requêtes web
+    // 🟢 Gestion du chenillard
+    if (i_defil >= defilement) {
+      shiftOutData(DS1, SHCP1, STCP1, (1 << findLed));
     }
-    init_game();  // 🔄 Réinitialiser après la victoire ou défaite
-    return;       // Évite d'exécuter la suite inutilement
-  }
 
-  // 🟢 Gestion du chenillard
-  if (i_defil >= defilement) {
-    findLed = (findLed + 1) % 8;  // Boucle circulaire 0 → 7
-    i_defil = 0;
-  } else {
-    i_defil += 5;
-  }
+    // 🔵 Vérification du bouton (Victoire ou Défaite)
+    if (buttonPressed) {
+      buttonPressed = false;  // Reset du flag
 
-  delay(5);  // Petit délai pour éviter une boucle trop rapide
+      // 🌟 Ajustement de la synchronisation avec `findLed - 1`
+      uint8_t shiftedValue = (findLed > 0) ? (1 << (findLed - 1)) : 128;
+
+      // 🌟 SYNCHRONISER AVEC RANDLED 🌟
+      if (randLedToMatch == shiftedValue) {
+        Serial.println("✔ Victoire !");
+        end_animation(true);
+      } else {
+        Serial.println("❌ Défaite...");
+        end_animation(false);
+      }
+      init_game();  // 🔄 Réinitialiser après la victoire ou défaite
+      return;       // Évite d'exécuter la suite inutilement
+    }
+
+    // 🟢 Gestion du chenillard
+    if (i_defil >= defilement) {
+      findLed = (findLed + 1) % 8;  // Boucle circulaire 0 → 7
+      i_defil = 0;
+    } else {
+      i_defil += 5;
+    }
+  }
 }
